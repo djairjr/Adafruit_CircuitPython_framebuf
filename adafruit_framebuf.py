@@ -39,6 +39,56 @@ MHMSB = 3  # Single bit displays like the Sharp Memory
 RGB888 = 4  # Neopixels and Dotstars
 GS2_HMSB = 5  # 2-bit color displays like the HT16K33 8x8 Matrix
 
+# Adding BMP Reader
+class BMPReader(object):
+    def __init__(self, filename):
+        self._filename = filename
+        self._read_img_data()
+
+    def get_pixels(self):
+        pixel_grid = []
+        pixel_data = list(self._pixel_data)  # Trabalhamos com uma cópia
+
+        bytes_per_pixel = 3  # Assumindo 24-bit color depth (RGB)
+        row_size = self.width * bytes_per_pixel
+
+        for y in range(self.height):
+            row = []
+            for x in range(self.width):
+                # Cálculo do índice do pixel no vetor de dados
+                idx = (y * row_size) + (x * bytes_per_pixel)
+                b = pixel_data[idx]
+                g = pixel_data[idx + 1]
+                r = pixel_data[idx + 2]
+                row.append((r, g, b))
+            pixel_grid.append(row)
+        return pixel_grid
+
+    def _read_img_data(self):
+        def lebytes_to_int(bytes):
+            n = 0x00
+            for b in reversed(bytes):
+                n = (n << 8) | b
+            return n
+
+        with open(self._filename, 'rb') as f:
+            img_bytes = bytearray(f.read())
+
+        # Verificação do formato BMP
+        assert img_bytes[0:2] == b'BM', "Não é um arquivo BMP válido"
+        assert lebytes_to_int(img_bytes[30:34]) == 0, \
+            "A compressão não é suportada"
+        assert lebytes_to_int(img_bytes[28:30]) == 24, \
+            "A profundidade de cor de 24 bits é a única suportada"
+
+        # Extração das dimensões da imagem
+        start_pos = lebytes_to_int(img_bytes[10:14])
+        self.width = lebytes_to_int(img_bytes[18:22])
+        self.height = lebytes_to_int(img_bytes[22:26])
+
+        # Extração dos dados dos pixels
+        self._pixel_data = img_bytes[start_pos:]
+      
 
 class GS2HMSBFormat:
     """GS2HMSBFormat"""
@@ -517,10 +567,42 @@ class FrameBuffer:
                 ):
                     self._font.draw_char(char, char_x, y, self, color, size=size)
             y += height * size
+    
+    # Different Method    No Pillow Needed (Good for Neopixels)
+  
+    def simple_image(self, bmp_filename):
+        # Determine effective width/height, considering rotation
+        width = self.width
+        height = self.height
+        if self.rotation in (1, 3):
+            width, height = height, width
+
+        # Load BMP file using BMPReader
+        bmp_reader = BMPReader(bmp_filename)
+        pixels = bmp_reader.get_pixels()
+
+        # Check image dimensions
+        if len(pixels) != height or len(pixels[0]) != width:
+            raise ValueError(f"Image must be {width}x{height} pixels.")
+
+        # Clear buffer
+        self.fill(0)  # Assuming '0' represents black
+
+        # Iterate through the pixels
+        for y in range(height):
+            for x in range(width):
+                # Extract RGB values from BMPReader pixel data
+                r, g, b = pixels[y][x]
+
+                # Set pixel on display buffer
+                self.pixel(x, y, (r, g, b))  # Set RGB color directly
+
+        # Optionally handle display update here
+        # self.update_display()  # Update display after setting all pixels
 
     # pylint: enable=too-many-arguments
 
-    def image(self, img):
+    def pillow_image(self, img):
         """Set buffer to value of Python Imaging Library image.  The image should
         be in 1 bit mode and a size equal to the display size."""
         # determine our effective width/height, taking rotation into account
